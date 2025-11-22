@@ -6,26 +6,46 @@ The [telescope-pnpm-monorepo.nvim](https://github.com/CaseyMichael/telescope-pnp
 
 ## Installation
 
-You can install this plugin using your favorite Neovim package manager, e.g. [lazy.nvim](https://github.com/folke/lazy.nvim) and [packer.nvim](https://github.com/wbthomason/packer.nvim).
+You can install this plugin using your favorite Neovim package manager.
 
-**lazy.nvim**:
+### lazy.nvim
+
+Using `opts` (recommended):
+
 ```lua
 {
   'CaseyMichael/telescope-pnpm-monorepo.nvim',
+  opts = {
+    silent = false,              -- Suppress notification messages
+    autoload_telescope = true,   -- Automatically load Telescope extension
+  },
   dependencies = {
     'nvim-telescope/telescope.nvim',
     'nvim-lua/plenary.nvim',
   },
-  config = function()
-    require('pnpm_monorepo').setup({
-      silent = false,              -- Suppress notification messages
-      autoload_telescope = true,   -- Automatically load Telescope extension
-    })
-  end,
 }
 ```
 
-**packer.nvim**:
+Or using `config` function:
+
+```lua
+{
+  'CaseyMichael/telescope-pnpm-monorepo.nvim',
+  config = function()
+    require('pnpm_monorepo').setup({
+      silent = false,
+      autoload_telescope = true,
+    })
+  end,
+  dependencies = {
+    'nvim-telescope/telescope.nvim',
+    'nvim-lua/plenary.nvim',
+  },
+}
+```
+
+### packer.nvim
+
 ```lua
 use({
   'CaseyMichael/telescope-pnpm-monorepo.nvim',
@@ -39,28 +59,106 @@ use({
 })
 ```
 
+## Configuration
+
+The plugin accepts the following configuration options:
+
+```lua
+require('pnpm_monorepo').setup({
+  -- Suppress notification messages
+  -- @type boolean
+  silent = false,
+
+  -- Automatically load Telescope extension when setup is called
+  -- @type boolean
+  autoload_telescope = true,
+
+  -- Telescope picker options (see :h telescope.defaults)
+  -- @type table
+  telescope_opts = {
+    layout_config = {
+      width = 0.60,
+      height = 0.60,
+      prompt_position = "top",
+    },
+    -- Any other Telescope options can be set here
+    -- Examples:
+    -- sorting_strategy = "ascending",
+    -- border = true,
+    -- borderchars = { "─", "│", "─", "│", "╭", "╮", "╯", "╰" },
+  },
+})
+```
+
+### Configuration Options
+
+- **`silent`** (`boolean`, default: `false`): When `true`, suppresses notification messages from the plugin.
+- **`autoload_telescope`** (`boolean`, default: `true`): When `true`, automatically loads the Telescope extension when `setup()` is called. Set to `false` if you want to manually load the extension later.
+- **`telescope_opts`** (`table`, default: see above): Telescope picker options that will be applied to the projects picker. These options are merged with defaults, so you can override specific settings. See `:h telescope.defaults` for all available options.
+
+### Telescope Options Examples
+
+Customize the picker appearance and behavior:
+
+```lua
+require('pnpm_monorepo').setup({
+  telescope_opts = {
+    -- Use a different theme
+    theme = "ivy",
+    
+    -- Custom layout
+    layout_config = {
+      width = 0.8,
+      height = 0.6,
+      prompt_position = "bottom",
+      preview_width = 0.5,
+    },
+    
+    -- Sorting and filtering
+    sorting_strategy = "ascending",
+    file_ignore_patterns = { "node_modules" },
+    
+    -- Border styling
+    border = true,
+    borderchars = { "─", "│", "─", "│", "╭", "╮", "╯", "╰" },
+  },
+})
+```
+
+Note: Options passed directly to `require('telescope').extensions.pnpm_monorepo.pnpm_monorepo(opts)` will override `telescope_opts` from config.
+
 ## Usage
 
-Activate the custom Telescope commands and `pnpm_monorepo` extension by adding
+### Telescope Extension
 
+The plugin provides a Telescope extension that can be activated in two ways:
+
+1. **Automatic** (default): If `autoload_telescope = true`, the extension is automatically loaded when `setup()` is called.
+
+2. **Manual**: Load the extension manually:
 ```lua
 require('telescope').load_extension('pnpm_monorepo')
 ```
 
-somewhere after your `require('telescope').setup()` call. This is typically done automatically if `autoload_telescope = true` (the default).
+### Opening the Picker
 
-The following `Telescope` extension command is provided:
+You can open the projects picker using the Telescope command:
 
-```VimL
+```vim
 :Telescope pnpm_monorepo
 ```
 
-This command can also be used from your `init.lua`.
-
-For example, to bind the picker to `<leader>m` use:
+Or programmatically from Lua:
 
 ```lua
--- Open pnpm monorepo projects picker
+require('telescope').extensions.pnpm_monorepo.pnpm_monorepo()
+```
+
+### Keybinding Example
+
+Bind the picker to a key, for example `<leader>m`:
+
+```lua
 vim.keymap.set('n', '<leader>m', function()
   require('telescope').extensions.pnpm_monorepo.pnpm_monorepo()
 end)
@@ -77,6 +175,22 @@ require('pnpm_monorepo').change_monorepo('/path/to/monorepo')
 ```
 
 The plugin will automatically detect the new monorepo root from `pnpm-workspace.yaml` and reload all projects.
+
+## Health Checks
+
+The plugin provides health checks to help diagnose configuration and setup issues. Run:
+
+```vim
+:checkhealth pnpm_monorepo
+```
+
+The health check validates:
+- Configuration settings
+- Required dependencies (plenary.nvim)
+- Optional dependencies (telescope.nvim)
+- Monorepo detection
+- Project loading
+- Telescope extension registration
 
 ## How It Works
 
@@ -97,3 +211,18 @@ packages:
 ```
 
 All directories matching these patterns that contain a `package.json` will be automatically detected as projects.
+
+## Requirements
+
+- **Neovim** 0.9.0 or higher
+- **plenary.nvim** (required)
+- **telescope.nvim** (optional, but required for picker functionality)
+
+## Troubleshooting
+
+If you encounter issues:
+
+1. Run `:checkhealth pnpm_monorepo` to diagnose problems
+2. Ensure you're in a directory with a `pnpm-workspace.yaml` file
+3. Verify that `plenary.nvim` is installed and available
+4. Check that projects have `package.json` files in their directories

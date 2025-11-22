@@ -1,27 +1,121 @@
 local utils = require("pnpm_monorepo.utils")
 
-local M = {}
+---@class pnpm_monorepo.UserConfig
+---@field silent? boolean Suppress notification messages
+---@field autoload_telescope? boolean Automatically load Telescope extension
+---@field telescope_opts? table Telescope picker options (see :h telescope.defaults)
 
-M.monorepoVars = {}
-M.currentMonorepo = vim.fn.getcwd()
-M.currentProjects = {}
-
-M.config = {
-	silent = false,
-	autoload_telescope = true,
-}
-
----@class pluginConfig
+---@class pnpm_monorepo.InternalConfig
 ---@field silent boolean
 ---@field autoload_telescope boolean
----@param config? pluginConfig
-M.setup = function(config)
-	-- Overwrite default config with user config
-	if config then
-		for k, v in pairs(config) do
-			M.config[k] = v
+---@field telescope_opts table Telescope picker options
+
+local M = {}
+
+---@type table<string, string[]>
+M.monorepoVars = {}
+
+---@type string
+M.currentMonorepo = vim.fn.getcwd()
+
+---@type string[]
+M.currentProjects = {}
+
+---@type pnpm_monorepo.InternalConfig
+local default_config = {
+	silent = false,
+	autoload_telescope = true,
+	telescope_opts = {
+		layout_config = {
+			width = 0.60,
+			height = 0.60,
+			prompt_position = "top",
+		},
+	},
+}
+
+---@type pnpm_monorepo.InternalConfig
+M.config = vim.deepcopy(default_config)
+
+---Deep merge user config into default config
+---@param default pnpm_monorepo.InternalConfig
+---@param user pnpm_monorepo.UserConfig
+---@return pnpm_monorepo.InternalConfig
+local function merge_config(default, user)
+	local merged = vim.deepcopy(default)
+	if not user then
+		return merged
+	end
+
+	for k, v in pairs(user) do
+		if merged[k] ~= nil then
+			-- Deep merge telescope_opts if provided
+			if k == "telescope_opts" and type(v) == "table" and type(merged[k]) == "table" then
+				merged[k] = vim.tbl_deep_extend("force", merged[k], v)
+			else
+				merged[k] = v
+			end
 		end
 	end
+
+	return merged
+end
+
+---Validate configuration with path-prefixed error messages
+---@param path string The path to the field being validated
+---@param tbl table The table to validate
+---@see vim.validate
+---@return boolean is_valid
+---@return string|nil error_message
+local function validate_path(path, tbl)
+	local ok, err = pcall(vim.validate, tbl)
+	return ok, err and (path .. "." .. err) or nil
+end
+
+---Validate user configuration
+---@param cfg pnpm_monorepo.InternalConfig
+---@return boolean is_valid
+---@return string|nil error_message
+local function validate_config(cfg)
+	local ok, err = validate_path("pnpm_monorepo.config", {
+		silent = { cfg.silent, "boolean" },
+		autoload_telescope = { cfg.autoload_telescope, "boolean" },
+		telescope_opts = { cfg.telescope_opts, "table" },
+	})
+	return ok, err
+end
+
+---Load Telescope extension if available and enabled
+local function load_telescope_extension()
+	if not M.config.autoload_telescope then
+		return
+	end
+
+	local has_telescope, telescope = pcall(require, "telescope")
+	if has_telescope then
+		-- Use pcall to handle cases where extension might already be loaded
+		pcall(telescope.load_extension, "pnpm_monorepo")
+	end
+end
+
+---Setup the plugin with user configuration
+---@param user_config? pnpm_monorepo.UserConfig
+function M.setup(user_config)
+	-- Merge user config with defaults
+	local merged_config = merge_config(default_config, user_config)
+
+	-- Validate merged config
+	local is_valid, err_msg = validate_config(merged_config)
+	if not is_valid then
+		vim.notify(
+			"pnpm_monorepo: Invalid configuration: " .. (err_msg or "unknown error"),
+			vim.log.levels.ERROR
+		)
+		-- Use default config on validation failure
+		merged_config = vim.deepcopy(default_config)
+	end
+
+	M.config = merged_config
 
 	vim.opt.autochdir = false
 
@@ -31,16 +125,10 @@ M.setup = function(config)
 	-- Auto-detect projects from pnpm-workspace.yaml
 	M.load_pnpm_projects()
 
-	-- I don't know if this is bad practice but I had weird issues where
-	-- sometimes telescope would load before my setup function
-	-- and cause the picker to bug out
-	if M.config.autoload_telescope then
-		local has_telescope, telescope = pcall(require, "telescope")
-		if has_telescope then
-			telescope.load_extension("pnpm_monorepo")
-		end
-	end
+	-- Load telescope extension if enabled
+	load_telescope_extension()
 
+	-- Setup session load autocmd
 	vim.api.nvim_create_autocmd("SessionLoadPost", {
 		callback = function()
 			M.change_monorepo(vim.fn.getcwd())
@@ -48,14 +136,19 @@ M.setup = function(config)
 	})
 end
 
--- Load projects list by auto-detecting from pnpm-workspace.yaml
-M.load_pnpm_projects = function()
+---Load projects list by auto-detecting from pnpm-workspace.yaml
+function M.load_pnpm_projects()
+	-- Ensure currentMonorepo is set
+	if not M.currentMonorepo or M.currentMonorepo == "" then
+		M.currentMonorepo = M.detect_monorepo_root()
+	end
+
 	local detected_projects = utils.auto_detect_projects(M.currentMonorepo)
 	local projects = {}
-	
+
 	-- Always include root directory as the first option
 	table.insert(projects, "/")
-	
+
 	-- Add detected projects if any
 	if detected_projects and #detected_projects > 0 then
 		for _, project in ipairs(detected_projects) do
@@ -65,20 +158,29 @@ M.load_pnpm_projects = function()
 			end
 		end
 	end
-	
+
+	-- Ensure we always have at least the root project
+	if #projects == 0 then
+		table.insert(projects, "/")
+	end
+
 	M.monorepoVars[M.currentMonorepo] = projects
-	M.currentProjects = M.monorepoVars[M.currentMonorepo]
+	M.currentProjects = M.monorepoVars[M.currentMonorepo] or projects
 end
 
-M.change_monorepo = function(path)
+---Change to a different monorepo
+---@param path string Path to the new monorepo
+function M.change_monorepo(path)
 	-- Auto-detect monorepo root from the provided path
 	M.currentMonorepo = M.detect_monorepo_root(path)
 	-- Load projects for the new monorepo
 	M.load_pnpm_projects()
 end
 
--- Detect monorepo root from pnpm-workspace.yaml location
-M.detect_monorepo_root = function(start_path)
+---Detect monorepo root from pnpm-workspace.yaml location
+---@param start_path? string Starting path for detection
+---@return string
+function M.detect_monorepo_root(start_path)
 	start_path = start_path or vim.fn.getcwd()
 	local workspace_file = utils.find_pnpm_workspace(start_path)
 	if workspace_file then
