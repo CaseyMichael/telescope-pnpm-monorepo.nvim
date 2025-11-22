@@ -10,6 +10,8 @@ You can install this plugin using your favorite Neovim package manager.
 
 ### lazy.nvim
 
+Using `opts` (recommended):
+
 ```lua
 {
   'CaseyMichael/telescope-pnpm-monorepo.nvim',
@@ -24,7 +26,7 @@ You can install this plugin using your favorite Neovim package manager.
 }
 ```
 
-**Note:** With lazy.nvim, using `opts` automatically calls `setup()` with the provided options. If you need more control, you can use the `config` function instead:
+Or using `config` function:
 
 ```lua
 {
