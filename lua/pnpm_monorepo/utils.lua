@@ -3,18 +3,20 @@ local scan_dir = require("plenary.scandir")
 
 local M = {}
 
--- Extend vim.notify to include silent option
-M.notify = function(message)
-	if require("pnpm_monorepo").config.silent then
+---Notify user with message, respecting silent config option
+---@param message string Message to display
+function M.notify(message)
+	local pnpm_monorepo = require("pnpm_monorepo")
+	if pnpm_monorepo.config and pnpm_monorepo.config.silent then
 		return
 	end
-	vim.notify(message)
+	vim.notify(message, vim.log.levels.INFO)
 end
 
--- Format a path to ensure it starts with '/' and is normalized
----@param path string
----@return string
-M.format_path = function(path)
+---Format a path to ensure it starts with '/' and is normalized
+---@param path string|nil Path to format
+---@return string Formatted path
+function M.format_path(path)
 	if not path or path == "" then
 		return "/"
 	end
@@ -33,17 +35,22 @@ M.format_path = function(path)
 	return path
 end
 
--- Find pnpm-workspace.yaml by walking up the directory tree
----@param start_path string|nil
----@return string|nil
-M.find_pnpm_workspace = function(start_path)
+---Find pnpm-workspace.yaml by walking up the directory tree
+---@param start_path string|nil Starting path for search
+---@return string|nil Absolute path to pnpm-workspace.yaml file, or nil if not found
+function M.find_pnpm_workspace(start_path)
 	start_path = start_path or vim.fn.getcwd()
-	local current = Path:new(start_path)
+	
+	local ok, current = pcall(Path.new, Path, start_path)
+	if not ok or not current then
+		return nil
+	end
 
 	while current:exists() do
 		local workspace_file = current:joinpath("pnpm-workspace.yaml")
 		if workspace_file:exists() then
-			return workspace_file:absolute()
+			local abs_path = workspace_file:absolute()
+			return abs_path
 		end
 
 		local parent = current:parent()
@@ -56,13 +63,16 @@ M.find_pnpm_workspace = function(start_path)
 	return nil
 end
 
--- Parse pnpm-workspace.yaml file
--- Simple YAML parser for the specific structure of pnpm-workspace.yaml
----@param file_path string
----@return string[]|nil
-M.parse_pnpm_workspace = function(file_path)
-	local content = Path:new(file_path):read()
-	if not content then
+---Parse pnpm-workspace.yaml file
+---Simple YAML parser for the specific structure of pnpm-workspace.yaml
+---@param file_path string Path to pnpm-workspace.yaml file
+---@return string[]|nil Array of workspace patterns, or nil if parsing fails
+function M.parse_pnpm_workspace(file_path)
+	local ok, content = pcall(function()
+		return Path:new(file_path):read()
+	end)
+	
+	if not ok or not content then
 		return nil
 	end
 
@@ -84,7 +94,9 @@ M.parse_pnpm_workspace = function(file_path)
 			local pattern = line:match("^%s*-%s*['\"](.+)['\"]")
 			if not pattern then
 				pattern = line:match("^%s*-%s*(.+)")
-				pattern = pattern:match("^%s*(.-)%s*$")
+				if pattern then
+					pattern = pattern:match("^%s*(.-)%s*$")
+				end
 			end
 			if pattern and pattern ~= "" then
 				table.insert(patterns, pattern)
@@ -95,76 +107,88 @@ M.parse_pnpm_workspace = function(file_path)
 	return #patterns > 0 and patterns or nil
 end
 
--- Resolve workspace patterns to actual directory paths
--- Patterns like 'apps/*' or 'packages/*' are resolved to actual directories
----@param monorepo_root string
----@param patterns string[]
----@return string[]
-M.resolve_workspace_patterns = function(monorepo_root, patterns)
+---Directories that should never be treated as packages
+---@type string[]
+local excluded_dirs = {
+	".github",
+	".git",
+	"node_modules",
+	".vscode",
+	".idea",
+	"dist",
+	"build",
+	".next",
+	".nuxt",
+	".cache",
+	"coverage",
+	".nyc_output",
+}
+
+---Check if directory name should be excluded
+---@param dir_name string Directory name to check
+---@return boolean True if directory should be excluded
+local function is_excluded_dir(dir_name)
+	for _, excluded in ipairs(excluded_dirs) do
+		if dir_name == excluded then
+			return true
+		end
+	end
+	return false
+end
+
+---Check if directory is a valid package (has package.json)
+---@param dir_path Path Path object to check
+---@return boolean True if directory contains package.json
+local function is_valid_package(dir_path)
+	local package_json = dir_path:joinpath("package.json")
+	return package_json:exists()
+end
+
+---Convert glob pattern to lua pattern
+---@param glob string Glob pattern (e.g., "apps/*")
+---@return string Lua pattern
+local function glob_to_lua_pattern(glob)
+	return "^" .. glob:gsub("[%(%)%.%+%-%*%?%[%]%^%$%%]", "%%%0"):gsub("%%%*", ".*") .. "$"
+end
+
+---Add path to results if valid
+---@param dir_path Path Path object to add
+---@param monorepo_root string Root path of monorepo
+---@param resolved_paths string[] Array to add path to
+---@param seen table<string, boolean> Set of already seen paths
+local function add_if_valid(dir_path, monorepo_root, resolved_paths, seen)
+	-- Get the directory name (last component of path)
+	-- Try to get it from the relative path first, fallback to filename
+	local relative_path = dir_path:make_relative(monorepo_root)
+	if not relative_path or relative_path == "" then
+		return
+	end
+
+	-- Extract directory name from relative path
+	local dir_name = relative_path:match("([^/\\]+)$")
+	if dir_name and is_excluded_dir(dir_name) then
+		return
+	end
+
+	if not is_valid_package(dir_path) then
+		return
+	end
+
+	local formatted_path = M.format_path(relative_path)
+	if not seen[formatted_path] then
+		table.insert(resolved_paths, formatted_path)
+		seen[formatted_path] = true
+	end
+end
+
+---Resolve workspace patterns to actual directory paths
+---Patterns like 'apps/*' or 'packages/*' are resolved to actual directories
+---@param monorepo_root string Root path of monorepo
+---@param patterns string[] Array of workspace patterns
+---@return string[] Array of resolved project paths
+function M.resolve_workspace_patterns(monorepo_root, patterns)
 	local resolved_paths = {}
 	local seen = {}
-
-	-- Directories that should never be treated as packages, even if they have package.json
-	local excluded_dirs = {
-		".github",
-		".git",
-		"node_modules",
-		".vscode",
-		".idea",
-		"dist",
-		"build",
-		".next",
-		".nuxt",
-		".cache",
-		"coverage",
-		".nyc_output",
-	}
-
-	-- Helper: Check if directory name should be excluded
-	local function is_excluded_dir(dir_name)
-		for _, excluded in ipairs(excluded_dirs) do
-			if dir_name == excluded then
-				return true
-			end
-		end
-		return false
-	end
-
-	-- Helper: Check if directory is a valid package (has package.json)
-	local function is_valid_package(dir_path)
-		return dir_path:joinpath("package.json"):exists()
-	end
-
-	-- Helper: Add path to results if valid
-	local function add_if_valid(dir_path)
-		-- Get the directory name (last component of path)
-		-- Try to get it from the relative path first, fallback to filename
-		local relative_path = dir_path:make_relative(monorepo_root)
-		if not relative_path or relative_path == "" then
-			return
-		end
-
-		-- Extract directory name from relative path
-		local dir_name = relative_path:match("([^/\\]+)$")
-		if dir_name and is_excluded_dir(dir_name) then
-			return
-		end
-
-		if not is_valid_package(dir_path) then
-			return
-		end
-
-		local formatted_path = M.format_path(relative_path)
-		if not seen[formatted_path] then
-			table.insert(resolved_paths, formatted_path)
-			seen[formatted_path] = true
-		end
-	end
-
-	-- Helper: Convert glob pattern to lua pattern
-	local function glob_to_lua_pattern(glob)
-		return "^" .. glob:gsub("[%(%)%.%+%-%*%?%[%]%^%$%%]", "%%%0"):gsub("%%%*", ".*") .. "$"
-	end
 
 	for _, pattern in ipairs(patterns) do
 		-- Remove quotes if present
@@ -186,7 +210,7 @@ M.resolve_workspace_patterns = function(monorepo_root, patterns)
 							local entry_path = Path:new(entry)
 							local relative_path = entry_path:make_relative(monorepo_root)
 							if relative_path and relative_path:match(lua_pattern) then
-								add_if_valid(entry_path)
+								add_if_valid(entry_path, monorepo_root, resolved_paths, seen)
 							end
 						end
 					end
@@ -196,7 +220,7 @@ M.resolve_workspace_patterns = function(monorepo_root, patterns)
 			-- Exact path pattern
 			local exact_path = Path:new(monorepo_root):joinpath(pattern)
 			if exact_path:exists() and exact_path:is_dir() then
-				add_if_valid(exact_path)
+				add_if_valid(exact_path, monorepo_root, resolved_paths, seen)
 			end
 		end
 	end
@@ -205,10 +229,10 @@ M.resolve_workspace_patterns = function(monorepo_root, patterns)
 	return resolved_paths
 end
 
--- Auto-detect projects from pnpm-workspace.yaml
----@param monorepo_root string
----@return string[]|nil
-M.auto_detect_projects = function(monorepo_root)
+---Auto-detect projects from pnpm-workspace.yaml
+---@param monorepo_root string Root path of monorepo
+---@return string[]|nil Array of detected project paths, or nil if detection fails
+function M.auto_detect_projects(monorepo_root)
 	local workspace_file = M.find_pnpm_workspace(monorepo_root)
 	if not workspace_file then
 		return nil
