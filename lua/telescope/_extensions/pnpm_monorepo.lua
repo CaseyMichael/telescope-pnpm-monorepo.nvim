@@ -56,8 +56,13 @@ local function select_project(prompt_bufnr)
 end
 
 ---Open pnpm monorepo projects picker
----@param opts? table Telescope options
+---@param opts? table Telescope options (merged with config.telescope_opts)
 local function pnpm_monorepo(opts)
+	local monorepo_module = require("pnpm_monorepo")
+	
+	-- Get telescope_opts from plugin config
+	local config_telescope_opts = monorepo_module.config and monorepo_module.config.telescope_opts or {}
+	
 	-- Default to a larger dropdown theme with prompt at top
 	local default_opts = require("telescope.themes").get_dropdown({
 		layout_config = {
@@ -67,9 +72,9 @@ local function pnpm_monorepo(opts)
 		},
 	})
 	
-	-- Merge user opts with defaults
+	-- Merge in order: defaults -> config.telescope_opts -> runtime opts
 	opts = opts or {}
-	opts = vim.tbl_deep_extend("force", default_opts, opts)
+	opts = vim.tbl_deep_extend("force", default_opts, config_telescope_opts, opts)
 	
 	-- Ensure prompt_position defaults to "top" if not explicitly set
 	if not opts.layout_config then
@@ -78,8 +83,6 @@ local function pnpm_monorepo(opts)
 	if opts.layout_config.prompt_position == nil then
 		opts.layout_config.prompt_position = "top"
 	end
-
-	local monorepo_module = require("pnpm_monorepo")
 
 	-- Ensure projects are loaded - reload if empty or nil
 	if not monorepo_module.currentProjects or #monorepo_module.currentProjects == 0 then

@@ -52,6 +52,18 @@ local function check_config()
 	else
 		health.ok("config.autoload_telescope: " .. tostring(config.autoload_telescope))
 	end
+
+	-- Validate telescope_opts if present
+	if config.telescope_opts then
+		local ok_telescope_opts, err_telescope_opts = pcall(vim.validate, {
+			telescope_opts = { config.telescope_opts, "table" },
+		})
+		if not ok_telescope_opts then
+			health.error("Invalid config.telescope_opts: " .. (err_telescope_opts or "unknown error"))
+		else
+			health.ok("config.telescope_opts: configured")
+		end
+	end
 end
 
 ---Check required dependencies

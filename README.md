@@ -72,6 +72,21 @@ require('pnpm_monorepo').setup({
   -- Automatically load Telescope extension when setup is called
   -- @type boolean
   autoload_telescope = true,
+
+  -- Telescope picker options (see :h telescope.defaults)
+  -- @type table
+  telescope_opts = {
+    layout_config = {
+      width = 0.60,
+      height = 0.60,
+      prompt_position = "top",
+    },
+    -- Any other Telescope options can be set here
+    -- Examples:
+    -- sorting_strategy = "ascending",
+    -- border = true,
+    -- borderchars = { "─", "│", "─", "│", "╭", "╮", "╯", "╰" },
+  },
 })
 ```
 
@@ -79,6 +94,38 @@ require('pnpm_monorepo').setup({
 
 - **`silent`** (`boolean`, default: `false`): When `true`, suppresses notification messages from the plugin.
 - **`autoload_telescope`** (`boolean`, default: `true`): When `true`, automatically loads the Telescope extension when `setup()` is called. Set to `false` if you want to manually load the extension later.
+- **`telescope_opts`** (`table`, default: see above): Telescope picker options that will be applied to the projects picker. These options are merged with defaults, so you can override specific settings. See `:h telescope.defaults` for all available options.
+
+### Telescope Options Examples
+
+Customize the picker appearance and behavior:
+
+```lua
+require('pnpm_monorepo').setup({
+  telescope_opts = {
+    -- Use a different theme
+    theme = "ivy",
+    
+    -- Custom layout
+    layout_config = {
+      width = 0.8,
+      height = 0.6,
+      prompt_position = "bottom",
+      preview_width = 0.5,
+    },
+    
+    -- Sorting and filtering
+    sorting_strategy = "ascending",
+    file_ignore_patterns = { "node_modules" },
+    
+    -- Border styling
+    border = true,
+    borderchars = { "─", "│", "─", "│", "╭", "╮", "╯", "╰" },
+  },
+})
+```
+
+Note: Options passed directly to `require('telescope').extensions.pnpm_monorepo.pnpm_monorepo(opts)` will override `telescope_opts` from config.
 
 ## Usage
 

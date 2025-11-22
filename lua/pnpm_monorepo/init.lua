@@ -3,10 +3,12 @@ local utils = require("pnpm_monorepo.utils")
 ---@class pnpm_monorepo.UserConfig
 ---@field silent? boolean Suppress notification messages
 ---@field autoload_telescope? boolean Automatically load Telescope extension
+---@field telescope_opts? table Telescope picker options (see :h telescope.defaults)
 
 ---@class pnpm_monorepo.InternalConfig
 ---@field silent boolean
 ---@field autoload_telescope boolean
+---@field telescope_opts table Telescope picker options
 
 local M = {}
 
@@ -23,6 +25,13 @@ M.currentProjects = {}
 local default_config = {
 	silent = false,
 	autoload_telescope = true,
+	telescope_opts = {
+		layout_config = {
+			width = 0.60,
+			height = 0.60,
+			prompt_position = "top",
+		},
+	},
 }
 
 ---@type pnpm_monorepo.InternalConfig
@@ -40,7 +49,12 @@ local function merge_config(default, user)
 
 	for k, v in pairs(user) do
 		if merged[k] ~= nil then
-			merged[k] = v
+			-- Deep merge telescope_opts if provided
+			if k == "telescope_opts" and type(v) == "table" and type(merged[k]) == "table" then
+				merged[k] = vim.tbl_deep_extend("force", merged[k], v)
+			else
+				merged[k] = v
+			end
 		end
 	end
 
@@ -66,6 +80,7 @@ local function validate_config(cfg)
 	local ok, err = validate_path("pnpm_monorepo.config", {
 		silent = { cfg.silent, "boolean" },
 		autoload_telescope = { cfg.autoload_telescope, "boolean" },
+		telescope_opts = { cfg.telescope_opts, "table" },
 	})
 	return ok, err
 end
